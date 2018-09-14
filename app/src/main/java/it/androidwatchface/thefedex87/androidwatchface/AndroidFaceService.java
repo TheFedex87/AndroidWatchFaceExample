@@ -12,13 +12,19 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.support.v4.content.ContextCompat;
 import android.support.v4.content.res.ResourcesCompat;
+import android.support.wearable.complications.ComplicationData;
+import android.support.wearable.complications.rendering.ComplicationDrawable;
 import android.support.wearable.watchface.CanvasWatchFaceService;
 import android.support.wearable.watchface.WatchFaceStyle;
+import android.util.Log;
+import android.util.SparseArray;
 import android.view.SurfaceHolder;
 import android.view.WindowInsets;
 import android.widget.Toast;
@@ -27,6 +33,12 @@ import java.lang.ref.WeakReference;
 import java.util.Calendar;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
+
+import static android.support.wearable.complications.ComplicationData.TYPE_ICON;
+import static android.support.wearable.complications.ComplicationData.TYPE_RANGED_VALUE;
+import static android.support.wearable.complications.ComplicationData.TYPE_SHORT_TEXT;
+import static android.support.wearable.complications.SystemProviders.WATCH_BATTERY;
+import static android.support.wearable.complications.SystemProviders.batteryProvider;
 
 /**
  * Digital watch face with seconds. In ambient mode, the seconds aren't displayed. On devices with
@@ -40,6 +52,26 @@ import java.util.concurrent.TimeUnit;
  * https://codelabs.developers.google.com/codelabs/watchface/index.html#0
  */
 public class AndroidFaceService extends CanvasWatchFaceService {
+    private static final String TAG = AndroidFaceService.class.getSimpleName();
+    // TODO: Step 2, intro 1
+    private static final int LEFT_COMPLICATION_ID = 0;
+
+
+    private static final int[] COMPLICATION_IDS = {LEFT_COMPLICATION_ID};
+
+    // Left and right dial supported types.
+    private static final int[][] COMPLICATION_SUPPORTED_TYPES = {
+            {
+                    ComplicationData.TYPE_RANGED_VALUE,
+                    TYPE_ICON,
+                    TYPE_SHORT_TEXT,
+                    ComplicationData.TYPE_SMALL_IMAGE
+            }
+    };
+    private SparseArray<ComplicationData> mActiveComplicationDataSparseArray;
+
+    private SparseArray<ComplicationDrawable> mComplicationDrawableSparseArray;
+
     private static final Typeface NORMAL_TYPEFACE =
             Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL);
 
@@ -81,6 +113,8 @@ public class AndroidFaceService extends CanvasWatchFaceService {
 
     private class Engine extends CanvasWatchFaceService.Engine {
 
+
+
         private final Handler mUpdateTimeHandler = new EngineHandler(this);
         private Calendar mCalendar;
         private final BroadcastReceiver mTimeZoneReceiver = new BroadcastReceiver() {
@@ -95,8 +129,15 @@ public class AndroidFaceService extends CanvasWatchFaceService {
         private float mYOffset;
         private Paint mBackgroundPaint;
         private Paint mTextPaint;
+        private Bitmap mBackgroundAndroidBitmap;
         private Bitmap mBackgroundBitmap;
         private float mScale;
+
+        private Paint mComplicationTextPaint;
+
+        private String batteryLevel = "100";
+
+        private Bitmap mComplicationContainer;
         /**
          * Whether the display supports fewer bits for each color in ambient mode. When true, we
          * disable anti-aliasing in ambient mode.
@@ -132,20 +173,100 @@ public class AndroidFaceService extends CanvasWatchFaceService {
             mTextPaint.setColor(
                     ContextCompat.getColor(getApplicationContext(), R.color.digital_text));
 
+            mComplicationTextPaint = new Paint();
+            mComplicationTextPaint.setTypeface(ResourcesCompat.getFont(getBaseContext(), R.font.font2));
+            mComplicationTextPaint.setAntiAlias(true);
+            mComplicationTextPaint.setColor(
+                    ContextCompat.getColor(getApplicationContext(), R.color.digital_text));
+            mComplicationTextPaint.setTextSize(20);
+
+
+            //Initialize complications
+            initializeComplications();
+
             //Initialize the background bitmap
-            mBackgroundBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.bg);
+            mBackgroundAndroidBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.bg);
+            mBackgroundBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.bg2);
+
+            mComplicationContainer = BitmapFactory.decodeResource(getResources(), R.drawable.complication_frame);
+            setDefaultSystemComplicationProvider(LEFT_COMPLICATION_ID, WATCH_BATTERY, TYPE_RANGED_VALUE);
+        }
+
+        // TODO: Step 2, initializeComplications()
+        private void initializeComplications() {
+            Log.d(TAG, "initializeComplications()");
+
+            mActiveComplicationDataSparseArray = new SparseArray<>(COMPLICATION_IDS.length);
+
+            ComplicationDrawable leftComplicationDrawable = (ComplicationDrawable) getDrawable(R.drawable.custom_complication_style);
+            leftComplicationDrawable.setContext(getApplicationContext());
+
+            mComplicationDrawableSparseArray = new SparseArray<>(COMPLICATION_IDS.length);
+            mComplicationDrawableSparseArray.put(LEFT_COMPLICATION_ID, leftComplicationDrawable);
+
+            setActiveComplications(COMPLICATION_IDS);
+        }
+
+        @Override
+        public void onComplicationDataUpdate(
+                int complicationId, ComplicationData complicationData) {
+            Log.d(TAG, "onComplicationDataUpdate() id: " + complicationId + ". Data Value: " + String.valueOf(complicationData.getValue()));
+
+            // Adds/updates active complication data in the array.
+            mActiveComplicationDataSparseArray.put(complicationId, complicationData);
+
+            batteryLevel = String.valueOf((int)complicationData.getValue());
+
+            // Updates correct ComplicationDrawable with updated data.
+            ComplicationDrawable complicationDrawable =
+                    mComplicationDrawableSparseArray.get(complicationId);
+            complicationDrawable.setComplicationData(complicationData);
+
+            invalidate();
         }
 
         @Override
         public void onSurfaceChanged(SurfaceHolder holder, int format, int width, int height) {
             super.onSurfaceChanged(holder, format, width, height);
-            mScale = ((float)width) / ((mBackgroundBitmap.getWidth()));
-            mScale *= 0.7;
+            mScale = ((float)width) / ((mBackgroundAndroidBitmap.getWidth()));
 
             mBackgroundBitmap = Bitmap.createScaledBitmap(mBackgroundBitmap,
                     (int)(mBackgroundBitmap.getWidth() * mScale),
                     (int)(mBackgroundBitmap.getHeight() * mScale),
                     true);
+
+            mScale *= 0.7;
+
+            mBackgroundAndroidBitmap = Bitmap.createScaledBitmap(mBackgroundAndroidBitmap,
+                    (int)(mBackgroundAndroidBitmap.getWidth() * mScale),
+                    (int)(mBackgroundAndroidBitmap.getHeight() * mScale),
+                    true);
+
+
+            mComplicationContainer = Bitmap.createScaledBitmap(mComplicationContainer,
+                    (int)(width * 0.2f),
+                    (int)(width * 0.2f),
+                    true);
+
+//            // TODO: Step 2, calculating ComplicationDrawable locations
+            int sizeOfComplication = width / 6;
+            int midpointOfScreen = width / 2;
+
+            int horizontalOffset = (width - sizeOfComplication) / 8;
+            int verticalOffset = midpointOfScreen + (sizeOfComplication / 2) - (int)(width * 0.03f);
+
+            Rect leftBounds =
+                    // Left, Top, Right, Bottom
+                    new Rect(
+                            horizontalOffset,
+                            verticalOffset,
+                            (horizontalOffset + sizeOfComplication),
+                            (verticalOffset + sizeOfComplication));
+
+            ComplicationDrawable leftComplicationDrawable =
+                    mComplicationDrawableSparseArray.get(LEFT_COMPLICATION_ID);
+            leftComplicationDrawable.setBounds(leftBounds);
+
         }
 
         @Override
@@ -261,8 +382,28 @@ public class AndroidFaceService extends CanvasWatchFaceService {
             if (isInAmbientMode()) {
                 canvas.drawColor(Color.BLACK);
             } else {
-                canvas.drawRect(0, 0, bounds.width(), bounds.height(), mBackgroundPaint);
+                //canvas.drawRect(0, 0, bounds.width(), bounds.height(), mBackgroundPaint);
                 canvas.drawBitmap(mBackgroundBitmap, (canvas.getWidth() - mBackgroundBitmap.getWidth()) /2 , (canvas.getHeight() - mBackgroundBitmap.getHeight()) /2 * 1.3f, mBackgroundPaint);
+                canvas.drawBitmap(mBackgroundAndroidBitmap, (canvas.getWidth() - mBackgroundAndroidBitmap.getWidth()) /2 , (canvas.getHeight() - mBackgroundAndroidBitmap.getHeight()) /2 * 1.3f, mBackgroundPaint);
+
+
+                mComplicationDrawableSparseArray.get(0).draw(canvas, System.currentTimeMillis());
+
+                canvas.drawBitmap(mComplicationContainer, (canvas.getWidth() - mComplicationContainer.getWidth()) / 2 , canvas.getHeight() * 0.68f - (mComplicationContainer.getHeight() / 2), mBackgroundPaint);
+                int midXComplicationBattery = canvas.getWidth() / 2;
+                int midYComplicationBattery = (int)(canvas.getHeight() * 0.68f);
+
+                String batteryLevelStr = batteryLevel + "%";
+                Rect textBoundsBatteryLevel = new Rect();
+                mComplicationTextPaint.getTextBounds(batteryLevelStr, 0, batteryLevelStr.length(), textBoundsBatteryLevel);
+                //Log.d(TAG, String.valueOf(midXComplicationBattery)+"_"+String.valueOf(midYComplicationBattery)+"_"+String.valueOf(textBoundsBatteryLevel.width())+"_"+String.valueOf(textBoundsBatteryLevel.height()));
+                canvas.drawText(batteryLevelStr, midXComplicationBattery - textBoundsBatteryLevel.width() / 2, midYComplicationBattery + textBoundsBatteryLevel.height() / 2, mComplicationTextPaint);
+
+//                Paint p = new Paint();
+//                p.setColor(Color.BLACK);
+//                p.setAntiAlias(true);
+//
+//                canvas.drawCircle(midXComplicationBattery, midYComplicationBattery, 5, p);
             }
 
             // Draw H:MM in ambient mode or H:MM:SS in interactive mode.
